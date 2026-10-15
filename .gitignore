@@ -1,0 +1,13 @@
+target/
+.idea/
+*.iml
+logs/
+.DS_Store
+
+# Terraform / Ansible generated files (never commit state or keys)
+.terraform/
+*.tfstate
+*.tfstate.*
+tfplan
+infra/terraform/generated/
+infra/ansible/inventory/hosts.ini

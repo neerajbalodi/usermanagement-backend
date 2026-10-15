@@ -1,0 +1,14 @@
+# Where the application code comes from
+backend_repo: https://github.com/neerajbalodi/usermanagement-backend.git
+frontend_repo: https://github.com/neerajbalodi/usermanagement-frontend.git
+app_branch: main
+
+# The Linux user that owns and runs the apps
+app_user: ubuntu
+
+# Database settings (must match the backend's application.properties defaults)
+db_name: userdb
+db_user: appuser
+# Comes from the Jenkins credential "um-db-password" (environment variable DB_PASSWORD).
+# Falls back to the Day 1 default when you run Ansible by hand.
+db_password: "{{ lookup('ansible.builtin.env', 'DB_PASSWORD') | default('appuser123', true) }}"

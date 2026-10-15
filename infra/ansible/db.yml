@@ -1,0 +1,81 @@
+# ---------------------------------------------------------------
+# Database server: PostgreSQL, a database and an app user,
+# reachable from inside the VPC (the backend).
+# Same as Step 2 of the Day 1 handout, but automated.
+# ---------------------------------------------------------------
+- name: Configure the database server
+  hosts: db
+  become: true
+  gather_facts: false
+
+  pre_tasks:
+    - name: Wait for the server
+      ansible.builtin.import_tasks: tasks/wait-for-server.yml
+
+  tasks:
+    - name: Install PostgreSQL
+      ansible.builtin.apt:
+        name:
+          - postgresql
+          - python3-psycopg2   # lets Ansible talk to PostgreSQL
+          - acl                # lets Ansible run tasks as the postgres user
+        state: present
+        update_cache: true
+        lock_timeout: 600
+
+    - name: Find the installed PostgreSQL version
+      ansible.builtin.command: ls /etc/postgresql
+      register: pg_versions
+      changed_when: false
+
+    - name: Remember the config folder
+      ansible.builtin.set_fact:
+        pg_conf_dir: "/etc/postgresql/{{ pg_versions.stdout_lines | map('int') | max }}/main"
+
+    - name: Listen on all network interfaces, not just localhost
+      ansible.builtin.lineinfile:
+        path: "{{ pg_conf_dir }}/postgresql.conf"
+        regexp: '^#?\s*listen_addresses\s*='
+        line: "listen_addresses = '*'"
+      notify: Restart PostgreSQL
+
+    - name: Allow the app user to log in from inside the VPC
+      ansible.builtin.lineinfile:
+        path: "{{ pg_conf_dir }}/pg_hba.conf"
+        line: "host    {{ db_name }}    {{ db_user }}    {{ vpc_cidr }}    scram-sha-256"
+      notify: Restart PostgreSQL
+
+    - name: Make sure PostgreSQL is running and starts on boot
+      ansible.builtin.service:
+        name: postgresql
+        state: started
+        enabled: true
+
+    - name: Create the app user
+      community.postgresql.postgresql_user:
+        name: "{{ db_user }}"
+        password: "{{ db_password }}"
+      become: true
+      become_user: postgres
+      no_log: true
+
+    - name: Create the database owned by the app user
+      community.postgresql.postgresql_db:
+        name: "{{ db_name }}"
+        owner: "{{ db_user }}"
+      become: true
+      become_user: postgres
+
+    - name: Apply config changes now
+      ansible.builtin.meta: flush_handlers
+
+    - name: Check PostgreSQL is listening on port 5432
+      ansible.builtin.wait_for:
+        port: 5432
+        timeout: 60
+
+  handlers:
+    - name: Restart PostgreSQL
+      ansible.builtin.service:
+        name: postgresql
+        state: restarted

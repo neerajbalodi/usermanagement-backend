@@ -1,0 +1,13 @@
+# A new EC2 instance needs a minute or two before it accepts SSH
+# and before its first-boot setup (cloud-init) has finished.
+- name: Wait until the server accepts SSH
+  ansible.builtin.wait_for_connection:
+    timeout: 600
+
+- name: Gather facts
+  ansible.builtin.setup:
+
+- name: Wait for first-boot setup (cloud-init) to finish
+  ansible.builtin.command: cloud-init status --wait
+  changed_when: false
+  failed_when: false

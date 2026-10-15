@@ -1,0 +1,126 @@
+# ---------------------------------------------------------------
+# Frontend server: Node.js 22, pull the code, point it at the
+# backend's public IP and run "ng serve" as a service.
+# Same as Step 4 of the Day 1 handout, but automated.
+# ---------------------------------------------------------------
+- name: Configure the frontend server
+  hosts: frontend
+  become: true
+  gather_facts: false
+
+  vars:
+    app_dir: /opt/user-management-frontend
+
+  pre_tasks:
+    - name: Wait for the server
+      ansible.builtin.import_tasks: tasks/wait-for-server.yml
+
+  tasks:
+    - name: Install prerequisites
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - git
+          - python3-debian   # needed by the deb822_repository module
+        state: present
+        update_cache: true
+        lock_timeout: 600
+
+    - name: Add the NodeSource repository (Node.js 22)
+      ansible.builtin.deb822_repository:
+        name: nodesource
+        types: deb
+        uris: https://deb.nodesource.com/node_22.x
+        suites: nodistro
+        components: main
+        signed_by: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+
+    - name: Install Node.js 22 (includes npm and npx)
+      ansible.builtin.apt:
+        name: nodejs
+        state: present
+        update_cache: true
+        lock_timeout: 600
+
+    - name: Create the app folder
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0755"
+
+    - name: Pull the frontend code from Git
+      ansible.builtin.git:
+        repo: "{{ frontend_repo }}"
+        dest: "{{ app_dir }}"
+        version: "{{ app_branch }}"
+        force: true
+      become: true
+      become_user: "{{ app_user }}"
+      register: frontend_code
+
+    - name: Point the app at the backend's public IP (environment.ts)
+      ansible.builtin.template:
+        src: templates/environment.ts.j2
+        dest: "{{ app_dir }}/src/environment/environment.ts"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0644"
+      notify: Restart frontend
+
+    - name: Check whether dependencies are installed
+      ansible.builtin.stat:
+        path: "{{ app_dir }}/node_modules"
+      register: node_modules
+
+    - name: Install dependencies (npm ci)
+      ansible.builtin.command: npm ci --no-audit --no-fund
+      args:
+        chdir: "{{ app_dir }}"
+      become: true
+      become_user: "{{ app_user }}"
+      environment:
+        NG_CLI_ANALYTICS: "false"
+      when: frontend_code.changed or not node_modules.stat.exists
+      changed_when: true
+      notify: Restart frontend
+
+    - name: Install the frontend as a service (runs ng serve)
+      ansible.builtin.template:
+        src: templates/user-management-frontend.service.j2
+        dest: /etc/systemd/system/user-management-frontend.service
+        mode: "0644"
+      notify: Restart frontend
+
+    - name: Start the frontend and enable it on boot
+      ansible.builtin.systemd_service:
+        name: user-management-frontend
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    - name: Apply changes now
+      ansible.builtin.meta: flush_handlers
+
+    - name: Wait for ng serve to listen on port 4200 (first compile takes a minute)
+      ansible.builtin.wait_for:
+        port: 4200
+        timeout: 300
+
+    - name: Check the page loads
+      ansible.builtin.uri:
+        url: http://localhost:4200
+        status_code: 200
+      register: page_check
+      retries: 20
+      delay: 6
+      until: page_check.status == 200
+
+  handlers:
+    - name: Restart frontend
+      ansible.builtin.systemd_service:
+        name: user-management-frontend
+        state: restarted
+        daemon_reload: true
