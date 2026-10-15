@@ -161,6 +161,11 @@ resource "aws_instance" "db" {
     volume_type = "gp3"
   }
 
+  # Keep the server when Ubuntu publishes a newer image (don't recreate it)
+  lifecycle {
+    ignore_changes = [ami]
+  }
+
   tags = { Name = "${var.name_prefix}-db", Role = "db" }
 }
 
@@ -175,6 +180,11 @@ resource "aws_instance" "backend" {
     volume_type = "gp3"
   }
 
+  # Keep the server when Ubuntu publishes a newer image (don't recreate it)
+  lifecycle {
+    ignore_changes = [ami]
+  }
+
   tags = { Name = "${var.name_prefix}-backend", Role = "backend" }
 }
 
@@ -187,6 +197,11 @@ resource "aws_instance" "frontend" {
   root_block_device {
     volume_size = 20
     volume_type = "gp3"
+  }
+
+  # Keep the server when Ubuntu publishes a newer image (don't recreate it)
+  lifecycle {
+    ignore_changes = [ami]
   }
 
   tags = { Name = "${var.name_prefix}-frontend", Role = "frontend" }
