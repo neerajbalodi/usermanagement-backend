@@ -1,11 +1,12 @@
-# user-management-backend (Day 1)
+# user-management-backend (Day 2)
 
-Spring Boot REST API with two endpoints:
+Spring Boot REST API:
 
 | Method | URL          | What it does        |
 |--------|--------------|---------------------|
 | POST   | `/api/users` | Register a new user |
-| GET    | `/api/users` | List all users      |
+| GET    | `/api/users` | List all users (with a temporary photo link) |
+| POST   | `/api/users/{id}/photo` | Upload / replace a user's photo (form field `file`, JPG/PNG/WEBP, max 5 MB) |
 
 ## Prerequisites
 - Java 17+ (JDK 21 works)
@@ -40,3 +41,15 @@ curl -X POST http://localhost:8080/api/users \
 
 curl http://localhost:8080/api/users
 ```
+
+## Photos (Day 2)
+Photos are stored in a **private** S3 bucket; PostgreSQL only keeps the S3 key.
+The API returns a pre-signed URL (valid 60 minutes) so the browser can show the photo.
+
+Set before starting (on EC2 Ansible does this):
+```bash
+export S3_BUCKET=<bucket-name>
+export AWS_REGION=ap-south-1
+```
+AWS credentials come from the EC2 IAM role (on a laptop: `aws configure`).
+Without `S3_BUCKET` the app still runs; only photo upload is switched off.

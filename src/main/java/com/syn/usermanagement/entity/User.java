@@ -1,5 +1,6 @@
 package com.syn.usermanagement.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.Email;
@@ -30,10 +31,16 @@ public class User {
     private String email;
 
     // WRITE_ONLY: accepted in the register request, never sent back in responses.
-    // Note: stored as plain text for Day 1. Password hashing comes later.
+    // Note: stored as plain text for now. Password hashing comes later.
     @NotBlank(message = "Password is required")
     @Size(min = 6, message = "Password must be at least 6 characters")
     @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     @Column(nullable = false)
     private String password;
+
+    // Day 2: where the photo lives in S3, e.g. "users/7/3f2a....jpg".
+    // The image itself is in S3, never in the database.
+    @JsonIgnore
+    @Column(name = "photo_key")
+    private String photoKey;
 }

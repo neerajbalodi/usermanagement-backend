@@ -1,7 +1,7 @@
 # Where the application code comes from
 backend_repo: https://github.com/neerajbalodi/usermanagement-backend.git
 frontend_repo: https://github.com/neerajbalodi/usermanagement-frontend.git
-app_branch: main
+app_branch: day-2
 
 # The Linux user that owns and runs the apps
 app_user: ubuntu

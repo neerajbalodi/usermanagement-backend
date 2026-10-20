@@ -28,3 +28,8 @@ output "ssh_key_file" {
   description = "Private key for: ssh -i <file> ubuntu@<public ip>"
   value       = abspath(local_sensitive_file.private_key.filename)
 }
+
+output "photos_bucket" {
+  description = "Private S3 bucket that holds the user photos"
+  value       = aws_s3_bucket.photos.bucket
+}

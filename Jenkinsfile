@@ -1,10 +1,11 @@
 // ------------------------------------------------------------------
 // User Management - Day 1 pipeline
-//   apply   : Terraform (3 EC2) -> Ansible (DB, backend, frontend) -> verify
+//   apply   : Terraform (3 EC2 + S3 bucket + IAM role) -> Ansible (DB, backend, frontend) -> verify
 //   destroy : Terraform removes everything
 // Needs on the Jenkins server: terraform, ansible, git, curl
 // Needs in Jenkins: Secret text credential with ID "um-db-password"
-// Needs AWS access: IAM role on the Jenkins EC2 (AmazonEC2FullAccess)
+// Needs AWS access: IAM role on the Jenkins EC2 with AmazonEC2FullAccess,
+//                   AmazonS3FullAccess and IAMFullAccess (Day 2 creates a bucket + a role)
 // ------------------------------------------------------------------
 pipeline {
     agent any
@@ -85,7 +86,8 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'um-db-password', variable: 'DB_PASSWORD')]) {
                     dir(env.ANSIBLE_DIR) {
-                        sh 'ANSIBLE_CONFIG=$PWD/ansible.cfg ansible-playbook backend.yml'
+                        // deploy the same branch Jenkins is building (e.g. day-2)
+                        sh 'ANSIBLE_CONFIG=$PWD/ansible.cfg ansible-playbook backend.yml ${GIT_BRANCH:+-e app_branch=${GIT_BRANCH#origin/}}'
                     }
                 }
             }
@@ -95,7 +97,7 @@ pipeline {
             when { expression { params.ACTION == 'apply' } }
             steps {
                 dir(env.ANSIBLE_DIR) {
-                    sh 'ANSIBLE_CONFIG=$PWD/ansible.cfg ansible-playbook frontend.yml'
+                    sh 'ANSIBLE_CONFIG=$PWD/ansible.cfg ansible-playbook frontend.yml ${GIT_BRANCH:+-e app_branch=${GIT_BRANCH#origin/}}'
                 }
             }
         }
@@ -115,10 +117,28 @@ pipeline {
                         echo "Checking frontend: $FRONTEND_URL"
                         curl -fsS -o /dev/null --retry 20 --retry-delay 6 --retry-all-errors "$FRONTEND_URL"
 
+                        # --- Day 2: photo upload to S3 -----------------------------------
+                        echo "Checking photo upload to S3"
+                        # a test user (409 'already exists' on later runs is fine)
+                        curl -s -o /dev/null -X POST "$BACKEND_URL" -H 'Content-Type: application/json' \
+                             -d '{"name":"Pipeline Check","email":"pipeline-check@example.com","password":"pipeline123"}'
+                        USER_ID=$(curl -fsS "$BACKEND_URL" | python3 -c 'import sys,json; print(next(u["id"] for u in json.load(sys.stdin) if u["email"]=="pipeline-check@example.com"))')
+
+                        # a tiny 1x1 PNG image
+                        echo 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==' | base64 -d > check.png
+                        curl -fsS -F "file=@check.png;type=image/png" "$BACKEND_URL/$USER_ID/photo" -o upload.json
+                        PHOTO_URL=$(python3 -c 'import json; print(json.load(open("upload.json"))["photoUrl"])')
+
+                        # the pre-signed link must download the same image from the private bucket
+                        curl -fsS -o downloaded.png "$PHOTO_URL"
+                        cmp -s check.png downloaded.png
+                        echo "Photo stored in S3 and readable through a pre-signed URL"
+
                         echo "=============================================================="
                         echo " APP IS RUNNING"
                         echo " Open in browser : $FRONTEND_URL"
                         echo " Users API       : $BACKEND_URL"
+                        echo " Photos bucket   : $(terraform output -raw photos_bucket)"
                         echo "=============================================================="
                     '''
                 }

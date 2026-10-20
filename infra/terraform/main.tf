@@ -175,6 +175,9 @@ resource "aws_instance" "backend" {
   key_name               = aws_key_pair.this.key_name
   vpc_security_group_ids = [aws_security_group.backend.id]
 
+  # Day 2: gives the backend its AWS permissions (S3) - no access keys needed
+  iam_instance_profile = aws_iam_instance_profile.backend.name
+
   root_block_device {
     volume_size = 20
     volume_type = "gp3"
@@ -218,6 +221,8 @@ resource "local_file" "ansible_inventory" {
     backend_public_ip  = aws_instance.backend.public_ip
     frontend_public_ip = aws_instance.frontend.public_ip
     vpc_cidr           = data.aws_vpc.default.cidr_block
+    s3_bucket          = aws_s3_bucket.photos.bucket
+    aws_region         = var.region
     ssh_key_path       = abspath(local_sensitive_file.private_key.filename)
   })
 }
