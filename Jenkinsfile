@@ -1,9 +1,9 @@
 // ------------------------------------------------------------------
 // User Management - Day 1 pipeline
-//   apply   : Terraform (3 EC2 + S3 bucket + IAM role) -> Ansible (DB, backend, frontend) -> verify
+//   apply   : Terraform (4 EC2 + S3 bucket + IAM role) -> Ansible (DB, Redis, backend, frontend) -> verify
 //   destroy : Terraform removes everything
 // Needs on the Jenkins server: terraform, ansible, git, curl
-// Needs in Jenkins: Secret text credential with ID "um-db-password"
+// Needs in Jenkins: Secret text credentials "um-db-password" and "um-redis-password"
 // Needs AWS access: IAM role on the Jenkins EC2 with AmazonEC2FullAccess,
 //                   AmazonS3FullAccess and IAMFullAccess (Day 2 creates a bucket + a role)
 // ------------------------------------------------------------------
@@ -81,10 +81,22 @@ pipeline {
             }
         }
 
+        stage('Configure Redis cache (Ansible)') {
+            when { expression { params.ACTION == 'apply' } }
+            steps {
+                withCredentials([string(credentialsId: 'um-redis-password', variable: 'REDIS_PASSWORD')]) {
+                    dir(env.ANSIBLE_DIR) {
+                        sh 'ANSIBLE_CONFIG=$PWD/ansible.cfg ansible-playbook redis.yml'
+                    }
+                }
+            }
+        }
+
         stage('Deploy backend (Ansible: git pull, mvn, java -jar)') {
             when { expression { params.ACTION == 'apply' } }
             steps {
-                withCredentials([string(credentialsId: 'um-db-password', variable: 'DB_PASSWORD')]) {
+                withCredentials([string(credentialsId: 'um-db-password', variable: 'DB_PASSWORD'),
+                                 string(credentialsId: 'um-redis-password', variable: 'REDIS_PASSWORD')]) {
                     dir(env.ANSIBLE_DIR) {
                         // deploy the same branch Jenkins is building (e.g. day-2)
                         sh 'ANSIBLE_CONFIG=$PWD/ansible.cfg ansible-playbook backend.yml ${GIT_BRANCH:+-e app_branch=${GIT_BRANCH#origin/}}'
@@ -133,6 +145,12 @@ pipeline {
                         curl -fsS -o downloaded.png "$PHOTO_URL"
                         cmp -s check.png downloaded.png
                         echo "Photo stored in S3 and readable through a pre-signed URL"
+
+                        # --- Day 3: cache ----------------------------------------------
+                        # The upload above cleared the cache, so: 1st call = database, 2nd = Redis
+                        FIRST=$(curl -fsS -o /dev/null -w '%{time_total}' "$BACKEND_URL")
+                        SECOND=$(curl -fsS -o /dev/null -w '%{time_total}' "$BACKEND_URL")
+                        echo "User list: 1st call (database) ${FIRST}s, 2nd call (Redis cache) ${SECOND}s"
 
                         echo "=============================================================="
                         echo " APP IS RUNNING"

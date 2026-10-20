@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# Day 1 infrastructure: 3 EC2 instances in the default VPC
+# Infrastructure: EC2 instances in the default VPC (Redis: see redis.tf)
 #   um-frontend (Angular)  -> port 4200 open to everyone
 #   um-backend  (Spring)   -> port 8080 open to everyone
 #   um-db       (Postgres) -> port 5432 open ONLY to the backend SG
@@ -222,6 +222,8 @@ resource "local_file" "ansible_inventory" {
     frontend_public_ip = aws_instance.frontend.public_ip
     vpc_cidr           = data.aws_vpc.default.cidr_block
     s3_bucket          = aws_s3_bucket.photos.bucket
+    redis_public_ip    = aws_instance.redis.public_ip
+    redis_private_ip   = aws_instance.redis.private_ip
     aws_region         = var.region
     ssh_key_path       = abspath(local_sensitive_file.private_key.filename)
   })

@@ -1,0 +1,71 @@
+# ---------------------------------------------------------------
+# Day 3 - Redis server: install Redis, listen on the network,
+# require a password, and limit memory (oldest-used keys go first).
+# ---------------------------------------------------------------
+- name: Configure the Redis cache server
+  hosts: redis
+  become: true
+  gather_facts: false
+
+  pre_tasks:
+    - name: Wait for the server
+      ansible.builtin.import_tasks: tasks/wait-for-server.yml
+
+  tasks:
+    - name: Install Redis
+      ansible.builtin.apt:
+        name: redis-server
+        state: present
+        update_cache: true
+        lock_timeout: 600
+
+    - name: Listen on all network interfaces (the security group still allows only the backend)
+      ansible.builtin.lineinfile:
+        path: /etc/redis/redis.conf
+        regexp: '^bind '
+        line: "bind 0.0.0.0"
+      notify: Restart Redis
+
+    - name: Require a password
+      ansible.builtin.lineinfile:
+        path: /etc/redis/redis.conf
+        regexp: '^#?\s*requirepass '
+        line: "requirepass {{ redis_password }}"
+      no_log: true
+      notify: Restart Redis
+
+    - name: Use at most 256 MB of memory
+      ansible.builtin.lineinfile:
+        path: /etc/redis/redis.conf
+        regexp: '^#?\s*maxmemory '
+        line: "maxmemory 256mb"
+      notify: Restart Redis
+
+    - name: When memory is full, remove the least recently used keys (LRU)
+      ansible.builtin.lineinfile:
+        path: /etc/redis/redis.conf
+        regexp: '^#?\s*maxmemory-policy '
+        line: "maxmemory-policy allkeys-lru"
+      notify: Restart Redis
+
+    - name: Make sure Redis is running and starts on boot
+      ansible.builtin.service:
+        name: redis-server
+        state: started
+        enabled: true
+
+    - name: Apply config changes now
+      ansible.builtin.meta: flush_handlers
+
+    - name: Check Redis answers with the password
+      ansible.builtin.command: redis-cli --no-auth-warning -a "{{ redis_password }}" PING
+      register: redis_ping
+      changed_when: false
+      failed_when: redis_ping.stdout != "PONG"
+      no_log: true
+
+  handlers:
+    - name: Restart Redis
+      ansible.builtin.service:
+        name: redis-server
+        state: restarted

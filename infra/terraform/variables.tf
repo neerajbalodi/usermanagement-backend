@@ -21,3 +21,9 @@ variable "extra_ssh_cidr" {
   type        = string
   default     = ""
 }
+
+variable "redis_instance_type" {
+  description = "EC2 type for the Redis cache server (Day 3)"
+  type        = string
+  default     = "t3.small"
+}

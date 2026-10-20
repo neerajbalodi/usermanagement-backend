@@ -1,4 +1,4 @@
-# user-management-backend (Day 2)
+# user-management-backend (Day 3)
 
 Spring Boot REST API:
 
@@ -53,3 +53,17 @@ export AWS_REGION=ap-south-1
 ```
 AWS credentials come from the EC2 IAM role (on a laptop: `aws configure`).
 Without `S3_BUCKET` the app still runs; only photo upload is switched off.
+
+## Cache (Day 3)
+`GET /api/users` is cached in Redis (key `users::all`, expires after 10 minutes).
+Registering a user or uploading a photo clears it. If Redis is down the app logs a
+warning and reads from PostgreSQL instead.
+
+On a laptop the cache is in memory (no Redis needed). To use Redis:
+```bash
+export CACHE_TYPE=redis
+export REDIS_HOST=localhost
+export REDIS_PASSWORD=<password>   # empty if your Redis has none
+```
+Watch it: the log prints `Cache MISS - loading users from PostgreSQL` only when
+the database is really used. In Redis: `redis-cli -a <pw> GET users::all`, `TTL users::all`.

@@ -1,7 +1,7 @@
 # Where the application code comes from
 backend_repo: https://github.com/neerajbalodi/usermanagement-backend.git
 frontend_repo: https://github.com/neerajbalodi/usermanagement-frontend.git
-app_branch: day-2
+app_branch: day-3
 
 # The Linux user that owns and runs the apps
 app_user: ubuntu
@@ -12,3 +12,7 @@ db_user: appuser
 # Comes from the Jenkins credential "um-db-password" (environment variable DB_PASSWORD).
 # Falls back to the Day 1 default when you run Ansible by hand.
 db_password: "{{ lookup('ansible.builtin.env', 'DB_PASSWORD') | default('appuser123', true) }}"
+
+# Day 3: Redis password - from the Jenkins credential "um-redis-password"
+# (environment variable REDIS_PASSWORD). Falls back to a default when run by hand.
+redis_password: "{{ lookup('ansible.builtin.env', 'REDIS_PASSWORD') | default('redis12345', true) }}"

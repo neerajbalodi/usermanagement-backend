@@ -1,6 +1,7 @@
 # ---------------------------------------------------------------
 # Backend server: Java, Maven, pull the code, build the JAR and
-# run "java -jar" as a service with DB_HOST pointing at the database.
+# run "java -jar" as a service with DB_HOST pointing at the database
+# and (Day 3) REDIS_HOST pointing at the cache.
 # Same as Step 3 of the Day 1 handout, but automated.
 # ---------------------------------------------------------------
 - name: Configure the backend server
@@ -103,6 +104,16 @@
       retries: 12
       delay: 5
       until: api_check.status == 200
+
+    # Day 3: the call above must have put the user list into Redis
+    - name: Check the user list is now cached in Redis (key users::all)
+      ansible.builtin.command: redis-cli --no-auth-warning -a "{{ redis_password }}" EXISTS "users::all"
+      delegate_to: um-redis
+      become: false
+      register: cache_check
+      changed_when: false
+      failed_when: cache_check.stdout != "1"
+      no_log: true
 
   handlers:
     - name: Restart backend

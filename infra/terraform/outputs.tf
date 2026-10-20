@@ -33,3 +33,8 @@ output "photos_bucket" {
   description = "Private S3 bucket that holds the user photos"
   value       = aws_s3_bucket.photos.bucket
 }
+
+output "redis_private_ip" {
+  description = "Redis cache server (reachable only from the backend)"
+  value       = aws_instance.redis.private_ip
+}
