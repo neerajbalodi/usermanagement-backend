@@ -1,0 +1,37 @@
+# ---------------------------------------------------------------
+# Horizontal Pod Autoscaler (Day 4)
+#   Keeps average CPU around 60% of the pods' CPU request
+#   by running between 2 and 10 backend pods.
+#   Scales back down by itself when the load is gone.
+# ---------------------------------------------------------------
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend
+  namespace: user-management
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: 2     # never fewer: one pod can fail and the app stays up
+  maxReplicas: 10    # cost safety limit
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+  behavior:
+    scaleUp:
+      policies:
+        - type: Pods
+          value: 4             # add at most 4 pods...
+          periodSeconds: 30    # ...every 30 seconds
+    scaleDown:
+      stabilizationWindowSeconds: 120   # load must stay low for 2 minutes (default 5) - nicer for class
+      policies:
+        - type: Pods
+          value: 1             # remove 1 pod...
+          periodSeconds: 60    # ...per minute

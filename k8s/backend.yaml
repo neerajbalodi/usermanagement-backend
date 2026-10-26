@@ -1,0 +1,91 @@
+# ---------------------------------------------------------------
+# Backend on Kubernetes (Day 4)
+#   ServiceAccount -> linked (by Terraform, EKS Pod Identity) to an IAM role
+#                     that may only use the photos S3 bucket
+#   Deployment     -> 2+ pods running the backend image
+#   Service        -> one stable name "backend" in front of all the pods
+# IMAGE_PLACEHOLDER is replaced by the pipeline with the image it just pushed.
+# ---------------------------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: um-backend
+  namespace: user-management
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: user-management
+  labels:
+    app: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0   # never go below the wanted number of pods during an update
+      maxSurge: 1         # start 1 new pod at a time
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      serviceAccountName: um-backend
+      containers:
+        - name: backend
+          image: IMAGE_PLACEHOLDER
+          ports:
+            - containerPort: 8080
+          # Settings (DB_HOST, REDIS_HOST, S3_BUCKET, ...) and passwords,
+          # both created by the infra pipeline
+          envFrom:
+            - configMapRef:
+                name: um-config
+            - secretRef:
+                name: um-secrets
+          # Requests = what the pod is guaranteed (and what HPA % is based on)
+          # Limits   = the most it may use
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          # Java needs time to start: allow up to 150 s before liveness checks begin
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            periodSeconds: 5
+            failureThreshold: 30
+          # Restart the container if it stops answering
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            periodSeconds: 10
+            failureThreshold: 3
+          # Only send traffic once the app is ready
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            periodSeconds: 5
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: user-management
+spec:
+  selector:
+    app: backend
+  ports:
+    - port: 8080
+      targetPort: 8080

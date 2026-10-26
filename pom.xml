@@ -16,7 +16,7 @@
     <artifactId>user-management</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>user-management</name>
-    <description>User Management - Day 3 (Register, list, S3 photos, Redis cache)</description>
+    <description>User Management - Day 4 (containers on EKS)</description>
 
     <properties>
         <java.version>17</java.version>
@@ -75,6 +75,12 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
+        <!-- Day 4: health endpoints for Kubernetes probes (/actuator/health/readiness, /liveness) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
         <!-- Lombok: generates getters/setters/constructors -->

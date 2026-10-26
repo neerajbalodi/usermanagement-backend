@@ -1,0 +1,10 @@
+target
+.git
+.idea
+logs
+infra-eks
+k8s
+Documentation
+*.md
+docker-compose.yml
+Jenkinsfile

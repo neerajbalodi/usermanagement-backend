@@ -1,0 +1,229 @@
+// ------------------------------------------------------------------
+// User Management - INFRA pipeline (Day 4, EKS)       job name: um-infra
+//   apply   : Terraform (VPC, EKS, ECR, S3, IAM) -> cluster add-ons
+//             -> shared services (PostgreSQL, Redis, config, secrets)
+//   destroy : remove everything from the cluster first, then Terraform destroy
+// The app pipelines (um-backend, um-frontend) deploy onto what this creates.
+//
+// Needs on Jenkins : terraform, aws (CLI v2), kubectl, helm
+// Needs in Jenkins : Secret text credentials "um-db-password", "um-redis-password"
+// Needs AWS access : see infra-eks/jenkins/README.md
+// ------------------------------------------------------------------
+pipeline {
+    agent any
+
+    parameters {
+        choice(name: 'ACTION', choices: ['apply', 'destroy'],
+               description: 'apply = create/update the cluster, destroy = delete everything')
+        string(name: 'AWS_REGION', defaultValue: 'ap-south-1', description: 'AWS region')
+    }
+
+    options {
+        disableConcurrentBuilds()
+        timeout(time: 60, unit: 'MINUTES')
+    }
+
+    environment {
+        TF_DIR             = 'infra-eks/terraform'
+        K8S_DIR            = 'infra-eks/k8s'
+        CLUSTER_NAME       = 'um-eks'
+        NAMESPACE          = 'user-management'
+        AWS_DEFAULT_REGION = "${params.AWS_REGION}"
+        TF_VAR_region      = "${params.AWS_REGION}"
+        TF_IN_AUTOMATION   = 'true'
+        TF_INPUT           = '0'
+        KUBECONFIG         = "${WORKSPACE}/.kubeconfig"
+    }
+
+    stages {
+
+        stage('Check tools') {
+            steps {
+                sh '''
+                    terraform -version | head -n 1
+                    aws --version
+                    kubectl version --client
+                    helm version --short
+                    aws sts get-caller-identity --query Arn --output text
+                '''
+            }
+        }
+
+        stage('Terraform state bucket') {
+            steps {
+                script {
+                    // One bucket per account+region holds the Terraform state (created once)
+                    def account = sh(script: 'aws sts get-caller-identity --query Account --output text', returnStdout: true).trim()
+                    env.STATE_BUCKET = "um-tfstate-${account}-${params.AWS_REGION}"
+                }
+                sh '''
+                    if aws s3api head-bucket --bucket "$STATE_BUCKET" 2>/dev/null; then
+                        echo "State bucket $STATE_BUCKET already exists"
+                    else
+                        echo "Creating state bucket $STATE_BUCKET"
+                        if [ "$AWS_DEFAULT_REGION" = "us-east-1" ]; then
+                            aws s3api create-bucket --bucket "$STATE_BUCKET"
+                        else
+                            aws s3api create-bucket --bucket "$STATE_BUCKET" \
+                                --create-bucket-configuration LocationConstraint="$AWS_DEFAULT_REGION"
+                        fi
+                        aws s3api put-bucket-versioning --bucket "$STATE_BUCKET" --versioning-configuration Status=Enabled
+                        aws s3api put-public-access-block --bucket "$STATE_BUCKET" --public-access-block-configuration \
+                            BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+                    fi
+                '''
+            }
+        }
+
+        stage('Terraform init') {
+            steps {
+                dir(env.TF_DIR) {
+                    sh '''
+                        terraform init -no-color -reconfigure \
+                            -backend-config="bucket=$STATE_BUCKET" \
+                            -backend-config="key=user-management/eks.tfstate" \
+                            -backend-config="region=$AWS_DEFAULT_REGION" \
+                            -backend-config="use_lockfile=true"
+                    '''
+                }
+            }
+        }
+
+        // ============================ APPLY ============================
+
+        stage('Terraform apply (VPC, EKS, ECR, S3, IAM)') {
+            when { expression { params.ACTION == 'apply' } }
+            steps {
+                dir(env.TF_DIR) {
+                    // First run ~15-20 min (EKS control plane), later runs ~1 min
+                    sh 'terraform apply -auto-approve -no-color'
+                }
+            }
+        }
+
+        stage('Connect kubectl') {
+            when { expression { params.ACTION == 'apply' } }
+            steps {
+                sh '''
+                    aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_DEFAULT_REGION"
+                    kubectl get nodes -o wide
+                '''
+            }
+        }
+
+        stage('Cluster add-ons (metrics-server, Cluster Autoscaler)') {
+            when { expression { params.ACTION == 'apply' } }
+            steps {
+                sh '''
+                    # metrics-server: measures pod CPU/memory -> needed by the HPA
+                    kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.7.2/components.yaml
+
+                    # Cluster Autoscaler: adds/removes worker nodes when pods do not fit
+                    helm repo add autoscaler https://kubernetes.github.io/autoscaler --force-update
+                    helm upgrade --install cluster-autoscaler autoscaler/cluster-autoscaler \
+                        --namespace kube-system \
+                        --set autoDiscovery.clusterName="$CLUSTER_NAME" \
+                        --set awsRegion="$AWS_DEFAULT_REGION" \
+                        --set rbac.serviceAccount.create=true \
+                        --set rbac.serviceAccount.name=cluster-autoscaler \
+                        --set extraArgs.balance-similar-node-groups=true \
+                        --set extraArgs.scale-down-unneeded-time=5m \
+                        --wait --timeout 5m
+                '''
+            }
+        }
+
+        stage('Shared services (config, secrets, PostgreSQL, Redis)') {
+            when { expression { params.ACTION == 'apply' } }
+            steps {
+                withCredentials([string(credentialsId: 'um-db-password', variable: 'DB_PASSWORD'),
+                                 string(credentialsId: 'um-redis-password', variable: 'REDIS_PASSWORD')]) {
+                    sh '''
+                        BUCKET=$(terraform -chdir="$TF_DIR" output -raw photos_bucket)
+
+                        kubectl apply -f "$K8S_DIR/namespace.yaml" -f "$K8S_DIR/storageclass.yaml"
+
+                        # Settings for the backend (and PostgreSQL)
+                        kubectl -n "$NAMESPACE" create configmap um-config \
+                            --from-literal=DB_HOST=postgres \
+                            --from-literal=DB_NAME=userdb \
+                            --from-literal=DB_USERNAME=appuser \
+                            --from-literal=DB_POOL_SIZE=5 \
+                            --from-literal=REDIS_HOST=redis \
+                            --from-literal=CACHE_TYPE=redis \
+                            --from-literal=S3_BUCKET="$BUCKET" \
+                            --from-literal=AWS_REGION="$AWS_DEFAULT_REGION" \
+                            --dry-run=client -o yaml | kubectl apply -f -
+
+                        # Passwords from Jenkins credentials -> Kubernetes Secret (never in Git)
+                        kubectl -n "$NAMESPACE" create secret generic um-secrets \
+                            --from-literal=DB_PASSWORD="$DB_PASSWORD" \
+                            --from-literal=REDIS_PASSWORD="$REDIS_PASSWORD" \
+                            --dry-run=client -o yaml | kubectl apply -f -
+
+                        kubectl apply -f "$K8S_DIR/postgres.yaml" -f "$K8S_DIR/redis.yaml"
+                        kubectl -n "$NAMESPACE" rollout status statefulset/postgres --timeout=300s
+                        kubectl -n "$NAMESPACE" rollout status deployment/redis --timeout=180s
+                    '''
+                }
+            }
+        }
+
+        stage('Summary') {
+            when { expression { params.ACTION == 'apply' } }
+            steps {
+                sh '''
+                    kubectl get nodes
+                    kubectl -n "$NAMESPACE" get pods,svc,pvc
+                    echo "=============================================================="
+                    echo " INFRA READY - now run the um-backend and um-frontend pipelines"
+                    terraform -chdir="$TF_DIR" output -no-color
+                    echo "=============================================================="
+                '''
+            }
+        }
+
+        // ============================ DESTROY ============================
+
+        stage('Remove apps from the cluster') {
+            when { expression { params.ACTION == 'destroy' } }
+            steps {
+                sh '''
+                    if ! aws eks describe-cluster --name "$CLUSTER_NAME" >/dev/null 2>&1; then
+                        echo "Cluster not found - nothing to remove from it"
+                        exit 0
+                    fi
+                    aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_DEFAULT_REGION"
+
+                    # Deleting the namespace removes the app, its Load Balancer and its EBS disk.
+                    # This MUST happen before Terraform deletes the VPC, otherwise the
+                    # Load Balancer still uses the network and the destroy fails.
+                    kubectl delete namespace "$NAMESPACE" --ignore-not-found --wait=true --timeout=10m
+                    helm uninstall cluster-autoscaler --namespace kube-system || true
+
+                    # Wait until Kubernetes has released all EBS disks
+                    for i in $(seq 1 30); do
+                        LEFT=$(kubectl get pv --no-headers 2>/dev/null | wc -l)
+                        [ "$LEFT" -eq 0 ] && break
+                        echo "Waiting for $LEFT volume(s) to be deleted..."; sleep 10
+                    done
+                '''
+            }
+        }
+
+        stage('Terraform destroy') {
+            when { expression { params.ACTION == 'destroy' } }
+            steps {
+                dir(env.TF_DIR) {
+                    sh 'terraform destroy -auto-approve -no-color'
+                }
+            }
+        }
+    }
+
+    post {
+        failure {
+            echo 'Build failed: open the red stage above and read the last error lines.'
+        }
+    }
+}
