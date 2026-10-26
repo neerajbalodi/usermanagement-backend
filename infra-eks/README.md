@@ -29,7 +29,12 @@ Terraform state is stored in S3 (`um-tfstate-<account>-<region>`), created autom
 
 - **Build with Parameters → `apply`**: first time ≈ 20 min (the EKS control plane takes ~12),
   afterwards ≈ 2 min. Ends with "INFRA READY".
-- Then run the app pipelines (`um-backend`, `um-frontend`).
+- Then run the app pipelines:
+  - **`um-backend`**: repo `usermanagement-backend`, branch `*/day-4`, Script Path `Jenkinsfile`
+  - **`um-frontend`**: repo `usermanagement-frontend`, branch `*/day-4`, Script Path `Jenkinsfile`
+
+  Each one: build image → push to ECR → deploy → wait for the rolling update → verify.
+  The frontend job prints the public URL of the app.
 - **`destroy`** at the end of the day: removes the app from the cluster first (so the load
   balancer and disks are deleted), then everything Terraform created.
   The small state bucket is kept for next time.
