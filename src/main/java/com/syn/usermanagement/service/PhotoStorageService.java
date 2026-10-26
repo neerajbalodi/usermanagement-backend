@@ -63,7 +63,10 @@ public class PhotoStorageService {
                 .key(key)
                 .contentType(file.getContentType())
                 .build();
-        s3.putObject(request, RequestBody.fromInputStream(file.getInputStream(), file.getSize()));
+        // fromBytes (not fromInputStream): the SDK reads the body twice (checksum + upload,
+        // and again on a retry). An upload stream can only be read once; bytes can be re-read.
+        // Photos are max 5 MB, so keeping them in memory is fine.
+        s3.putObject(request, RequestBody.fromBytes(file.getBytes()));
 
         log.info("Uploaded photo for user {} to s3://{}/{}", userId, bucket, key);
         return key;
